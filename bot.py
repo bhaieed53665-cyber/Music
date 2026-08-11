@@ -13,7 +13,7 @@ import yt_dlp
 # هذا هو الاسلوب الصحيح عند الرفع على استضافه متل Railway
 # بدل ما تكتب التوكن مباشره بالكود
 TOKEN = os.environ.get("DISCORD_TOKEN")
-PREFIX = os.environ.get("BOT_PREFIX", "!")  # يمكنك تغيير الرمز الذي يسبق الاوامر
+PREFIX = os.environ.get("BOT_PREFIX", "")  # فاضي يعني بدون رمز قبل الامر، تقدر تحطه لو حبيت
 
 intents = discord.Intents.default()
 intents.message_content = True
@@ -45,6 +45,7 @@ def get_state(guild_id):
             "current": None,
             "loop": False,
             "volume": 0.5,
+            "text_channel_id": None,  # شات الروم الي البوت مقيد يشتغل فيه بس
         }
     return guild_states[guild_id]
 
@@ -113,6 +114,65 @@ def play_next(guild, error=None):
 @bot.event
 async def on_ready():
     print(f"تم تسجيل الدخول باسم {bot.user}")
+
+
+# ------------------------------------------------------------------
+# تقييد الاوامر بحيث تشتغل فقط داخل شات الروم الي دخل عليه البوت
+# امر come معفى من هذا الشرط لانه هو الي يحدد الروم من الاساس
+# ------------------------------------------------------------------
+
+@bot.check
+async def restrict_to_room_chat(ctx):
+    if ctx.command is not None and ctx.command.name == "come":
+        return True
+
+    if ctx.guild is None:
+        return False
+
+    state = guild_states.get(ctx.guild.id)
+    if not state or not state.get("text_channel_id"):
+        return False
+
+    return ctx.channel.id == state["text_channel_id"]
+
+
+@bot.event
+async def on_command_error(ctx, error):
+    if isinstance(error, commands.MissingPermissions):
+        # تجاهل بصمت، ما نرسل اي رد لغير الادمن
+        pass
+    elif isinstance(error, commands.CheckFailure):
+        # تجاهل بصمت، الامر ارسل بمكان غير مسموح او البوت لسا ما دخل
+        pass
+    else:
+        print(f"خطا غير متوقع: {error}")
+
+
+# ------------------------------------------------------------------
+# امر استدعاء البوت للروم: come (للادمن فقط)
+# ------------------------------------------------------------------
+
+@bot.command(name="come", aliases=["احضر", "تعال"])
+@commands.has_permissions(administrator=True)
+async def come(ctx):
+    if ctx.author.voice is None:
+        await ctx.send("لازم تكون داخل روم صوتي حتى يقدر البوت يدخل")
+        return
+
+    channel = ctx.author.voice.channel
+    vc = ctx.voice_client
+
+    if vc is None:
+        vc = await channel.connect()
+    elif vc.channel != channel:
+        await vc.move_to(channel)
+
+    state = get_state(ctx.guild.id)
+    state["text_channel_id"] = channel.id
+
+    await channel.send(
+        "تم دخول البوت لهذا الروم من الان الاوامر تشتغل هنا فقط ولا تشتغل بأي شات اخر"
+    )
 
 
 # ------------------------------------------------------------------
@@ -208,8 +268,28 @@ async def stop(ctx):
     state["current"] = None
     state["loop"] = False
     vc.stop()
+    await ctx.send("تم ايقاف تشغيل الاغاني والبوت باقي بالروم")
+
+
+# ------------------------------------------------------------------
+# اخراج البوت من الروم نهائيا: leave (للادمن فقط)
+# ------------------------------------------------------------------
+
+@bot.command(name="leave", aliases=["اخرج", "طلع"])
+@commands.has_permissions(administrator=True)
+async def leave(ctx):
+    vc = ctx.voice_client
+    if vc is None:
+        await ctx.send("البوت مو داخل اي روم اصلا")
+        return
+    state = get_state(ctx.guild.id)
+    state["queue"].clear()
+    state["current"] = None
+    state["loop"] = False
+    state["text_channel_id"] = None
+    vc.stop()
     await vc.disconnect()
-    await ctx.send("تم ايقاف التشغيل نهائيا وخروج البوت من الروم")
+    await ctx.send("تم اخراج البوت من الروم، يمكنك استدعاءه لروم ثاني بامر come")
 
 
 # ------------------------------------------------------------------
