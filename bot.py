@@ -64,14 +64,26 @@ async def setup_hook():
         except Exception:
             pass  # على اغلب الاستضافات مش لازم تحميل يدوي، PyNaCl كافي
 
+    missing = []
+
     try:
         import nacl  # noqa: F401
-        print("PyNaCl موجودة، دعم الصوت شغال")
     except ImportError:
+        missing.append("PyNaCl")
+
+    try:
+        import davey  # noqa: F401
+    except ImportError:
+        missing.append("davey")
+
+    if missing:
         print(
-            "!!! تحذير: مكتبة PyNaCl غير مثبتة. اضف السطر التالي لملف "
-            "requirements.txt ثم اعد النشر:\n    PyNaCl>=1.5.0"
+            "!!! تحذير: المكتبات التاليه ناقصه وبيسبب فشل الاتصال الصوتي: "
+            + ", ".join(missing)
+            + "\nاضفهم لملف requirements.txt ثم اعد النشر (Redeploy) على Railway."
         )
+    else:
+        print("PyNaCl و davey موجودتين، دعم الصوت شغال بشكل كامل")
 
 
 # ------------------------------------------------------------------
