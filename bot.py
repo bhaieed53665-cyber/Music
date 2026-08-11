@@ -1,6 +1,7 @@
 import asyncio
 import functools
 import os
+import traceback
 import discord
 from discord import app_commands
 from discord.ext import commands
@@ -49,6 +50,28 @@ def get_state(guild_id):
             "text_channel_id": None,  # شات الروم الي البوت مقيد يشتغل فيه بس
         }
     return guild_states[guild_id]
+
+
+# ------------------------------------------------------------------
+# فحص جاهزية الاتصال الصوتي عند الاقلاع (PyNaCl هو اشهر سبب للفشل)
+# ------------------------------------------------------------------
+
+@bot.event
+async def setup_hook():
+    if not discord.opus.is_loaded():
+        try:
+            discord.opus.load_opus("libopus.so.0")
+        except Exception:
+            pass  # على اغلب الاستضافات مش لازم تحميل يدوي، PyNaCl كافي
+
+    try:
+        import nacl  # noqa: F401
+        print("PyNaCl موجودة، دعم الصوت شغال")
+    except ImportError:
+        print(
+            "!!! تحذير: مكتبة PyNaCl غير مثبتة. اضف السطر التالي لملف "
+            "requirements.txt ثم اعد النشر:\n    PyNaCl>=1.5.0"
+        )
 
 
 # ------------------------------------------------------------------
@@ -155,6 +178,43 @@ async def on_command_error(ctx, error):
 
 
 # ------------------------------------------------------------------
+# دالة موحدة للاتصال بالروم الصوتي مع تشخيص واضح للسبب عند الفشل
+# ------------------------------------------------------------------
+
+async def connect_to_voice(channel):
+    """
+    ترجع (voice_client, رسالة_خطأ)
+    رسالة_خطأ تكون None لو نجح الاتصال
+    """
+    perms = channel.permissions_for(channel.guild.me)
+    if not perms.connect or not perms.speak:
+        return None, (
+            "البوت ما عنده صلاحية Connect او Speak بهذا الروم بالتحديد "
+            "(تأكد من اعدادات الروم الصوتي نفسه مو بس صلاحيات الرتبة العامة، "
+            "قد يكون فيه Permission Overwrite يمنع البوت)"
+        )
+
+    try:
+        vc = channel.guild.voice_client
+        if vc is None:
+            vc = await channel.connect(timeout=15, reconnect=True)
+        elif vc.channel != channel:
+            await vc.move_to(channel)
+        return vc, None
+    except discord.ClientException as e:
+        return None, f"خطأ اتصال (ClientException): {e}"
+    except asyncio.TimeoutError:
+        return None, (
+            "انتهت مهلة الاتصال بالروم الصوتي (Timeout). "
+            "غالبا سبب هذا ان استضافة البوت (متل Railway) تحجب او تبطئ منافذ UDP "
+            "اللازمة لصوت ديسكورد، او ان مكتبة PyNaCl غير مثبتة."
+        )
+    except Exception as e:
+        traceback.print_exc()  # يطبع تفاصيل كاملة باللوجات
+        return None, f"خطأ غير متوقع: {type(e).__name__}: {e}"
+
+
+# ------------------------------------------------------------------
 # امر استدعاء البوت للروم: come (للادمن فقط)
 # ------------------------------------------------------------------
 
@@ -166,18 +226,10 @@ async def come(ctx):
         return
 
     channel = ctx.author.voice.channel
-    vc = ctx.voice_client
+    vc, error_msg = await connect_to_voice(channel)
 
-    try:
-        if vc is None:
-            vc = await channel.connect()
-        elif vc.channel != channel:
-            await vc.move_to(channel)
-    except Exception as e:
-        print(f"فشل الاتصال بالروم الصوتي: {e}")
-        await ctx.send(
-            "ما قدرت ادخل الروم الصوتي، تاكد ان البوت عنده صلاحية Connect و Speak بهذا الروم"
-        )
+    if error_msg:
+        await ctx.send(f"ما قدرت ادخل الروم الصوتي: {error_msg}")
         return
 
     state = get_state(ctx.guild.id)
@@ -203,12 +255,10 @@ async def play(ctx, *, query: str = None):
         return
 
     channel = ctx.author.voice.channel
-    vc = ctx.voice_client
-
-    if vc is None:
-        vc = await channel.connect()
-    elif vc.channel != channel:
-        await vc.move_to(channel)
+    vc, error_msg = await connect_to_voice(channel)
+    if error_msg:
+        await ctx.send(f"ما قدرت ادخل الروم الصوتي: {error_msg}")
+        return
 
     msg = await ctx.send("جاري البحث عن المقطع")
 
@@ -382,18 +432,11 @@ async def come_slash(interaction: discord.Interaction):
 
     channel = interaction.user.voice.channel
     guild = interaction.guild
-    vc = guild.voice_client
 
-    try:
-        if vc is None:
-            vc = await channel.connect()
-        elif vc.channel != channel:
-            await vc.move_to(channel)
-    except Exception as e:
-        print(f"فشل الاتصال بالروم الصوتي: {e}")
+    vc, error_msg = await connect_to_voice(channel)
+    if error_msg:
         await interaction.followup.send(
-            "ما قدرت ادخل الروم الصوتي، تاكد ان البوت عنده صلاحية Connect و Speak بهذا الروم",
-            ephemeral=True,
+            f"ما قدرت ادخل الروم الصوتي: {error_msg}", ephemeral=True
         )
         return
 
