@@ -168,10 +168,17 @@ async def come(ctx):
     channel = ctx.author.voice.channel
     vc = ctx.voice_client
 
-    if vc is None:
-        vc = await channel.connect()
-    elif vc.channel != channel:
-        await vc.move_to(channel)
+    try:
+        if vc is None:
+            vc = await channel.connect()
+        elif vc.channel != channel:
+            await vc.move_to(channel)
+    except Exception as e:
+        print(f"فشل الاتصال بالروم الصوتي: {e}")
+        await ctx.send(
+            "ما قدرت ادخل الروم الصوتي، تاكد ان البوت عنده صلاحية Connect و Speak بهذا الروم"
+        )
+        return
 
     state = get_state(ctx.guild.id)
     state["text_channel_id"] = channel.id
@@ -369,19 +376,31 @@ async def come_slash(interaction: discord.Interaction):
         )
         return
 
+    # نأجل الرد فورا لان دخول الروم الصوتي ممكن ياخذ اكثر من 3 ثواني
+    # ولو ما اجلنا الرد بسرعه ديسكورد يعتبر ان البوت ما رد اطلاقا
+    await interaction.response.defer(ephemeral=True)
+
     channel = interaction.user.voice.channel
     guild = interaction.guild
     vc = guild.voice_client
 
-    if vc is None:
-        vc = await channel.connect()
-    elif vc.channel != channel:
-        await vc.move_to(channel)
+    try:
+        if vc is None:
+            vc = await channel.connect()
+        elif vc.channel != channel:
+            await vc.move_to(channel)
+    except Exception as e:
+        print(f"فشل الاتصال بالروم الصوتي: {e}")
+        await interaction.followup.send(
+            "ما قدرت ادخل الروم الصوتي، تاكد ان البوت عنده صلاحية Connect و Speak بهذا الروم",
+            ephemeral=True,
+        )
+        return
 
     state = get_state(guild.id)
     state["text_channel_id"] = channel.id
 
-    await interaction.response.send_message("تم استدعاء البوت للروم", ephemeral=True)
+    await interaction.followup.send("تم استدعاء البوت للروم", ephemeral=True)
     await channel.send(
         "تم دخول البوت لهذا الروم من الان الاوامر تشتغل هنا فقط ولا تشتغل بأي شات اخر"
     )
