@@ -1,4 +1,5 @@
 import asyncio
+import base64
 import functools
 import os
 import traceback
@@ -17,6 +18,27 @@ import yt_dlp
 TOKEN = os.environ.get("DISCORD_TOKEN")
 PREFIX = os.environ.get("BOT_PREFIX", "")  # فاضي يعني بدون رمز قبل الامر، تقدر تحطه لو حبيت
 
+# ملف الكوكيز يستخدم لتفادي حماية يوتيوب ضد البوتات
+# يقرا من متغير بيئة مشفر Base64 اسمه YT_COOKIES_B64 (اذا موجود)
+COOKIES_PATH = "cookies.txt"
+
+
+def prepare_cookies_file():
+    cookies_b64 = os.environ.get("YT_COOKIES_B64")
+    if not cookies_b64:
+        return False
+    try:
+        with open(COOKIES_PATH, "wb") as f:
+            f.write(base64.b64decode(cookies_b64))
+        print("تم انشاء ملف الكوكيز من متغير البيئة بنجاح")
+        return True
+    except Exception as e:
+        print(f"فشل انشاء ملف الكوكيز: {e}")
+        return False
+
+
+HAS_COOKIES = prepare_cookies_file()
+
 intents = discord.Intents.default()
 intents.message_content = True
 intents.voice_states = True
@@ -29,7 +51,17 @@ YDL_OPTIONS = {
     "quiet": True,
     "default_search": "ytsearch",
     "source_address": "0.0.0.0",
+    # تفادي حماية "Sign in to confirm you're not a bot" من يوتيوب
+    # عبر تقليد عميل اندرويد بدل عميل الويب العادي
+    "extractor_args": {
+        "youtube": {
+            "player_client": ["android", "web"],
+        }
+    },
 }
+
+if HAS_COOKIES:
+    YDL_OPTIONS["cookiefile"] = COOKIES_PATH
 
 FFMPEG_OPTIONS = {
     "before_options": "-reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 5",
@@ -84,6 +116,14 @@ async def setup_hook():
         )
     else:
         print("PyNaCl و davey موجودتين، دعم الصوت شغال بشكل كامل")
+
+    if HAS_COOKIES:
+        print("كوكيز يوتيوب مفعّلة، البحث عن المقاطع لازم يشتغل بشكل طبيعي")
+    else:
+        print(
+            "!!! تنبيه: ما فيه كوكيز يوتيوب مضافه (YT_COOKIES_B64). "
+            "لو ظهر خطا Sign in to confirm you're not a bot، هذا هو الحل."
+        )
 
 
 # ------------------------------------------------------------------
@@ -209,9 +249,11 @@ async def connect_to_voice(channel):
     try:
         vc = channel.guild.voice_client
         if vc is None:
-            vc = await channel.connect(timeout=15, reconnect=True)
+            vc = await channel.connect(timeout=15, reconnect=True, self_deaf=True)
         elif vc.channel != channel:
             await vc.move_to(channel)
+            # move_to ما بيعدل حالة Deafen، فنجبرها يدوياً
+            await channel.guild.change_voice_state(channel=channel, self_deaf=True)
         return vc, None
     except discord.ClientException as e:
         return None, f"خطأ اتصال (ClientException): {e}"
@@ -276,8 +318,11 @@ async def play(ctx, *, query: str = None):
 
     try:
         song = await search_song(query)
-    except Exception:
-        await msg.edit(content="ما قدرت الاقي المقطع تاكد من الاسم او الرابط")
+    except Exception as e:
+        traceback.print_exc()  # يطبع السبب الحقيقي كامل باللوجات
+        await msg.edit(
+            content=f"ما قدرت الاقي المقطع تاكد من الاسم او الرابط\n(تفاصيل: {type(e).__name__})"
+        )
         return
 
     state = get_state(ctx.guild.id)
