@@ -2,6 +2,7 @@ import asyncio
 import functools
 import os
 import discord
+from discord import app_commands
 from discord.ext import commands
 import yt_dlp
 
@@ -114,6 +115,11 @@ def play_next(guild, error=None):
 @bot.event
 async def on_ready():
     print(f"تم تسجيل الدخول باسم {bot.user}")
+    try:
+        synced = await bot.tree.sync()
+        print(f"تم تفعيل {len(synced)} امر سلاش")
+    except Exception as e:
+        print(f"فشل تفعيل اوامر السلاش: {e}")
 
 
 # ------------------------------------------------------------------
@@ -346,6 +352,59 @@ async def loop(ctx):
         await ctx.send("تم تفعيل تكرار المقطع")
     else:
         await ctx.send("تم تعطيل تكرار المقطع")
+
+
+# ------------------------------------------------------------------
+# اوامر سلاش (Slash Commands): /come و /restart
+# مخصصه للادمن فقط، ومخفيه افتراضيا عن باقي الاعضاء بواجهه ديسكورد
+# ------------------------------------------------------------------
+
+@bot.tree.command(name="come", description="سحب البوت لنفس الروم الصوتي الي انت فيه")
+@app_commands.default_permissions(administrator=True)
+@app_commands.checks.has_permissions(administrator=True)
+async def come_slash(interaction: discord.Interaction):
+    if interaction.user.voice is None:
+        await interaction.response.send_message(
+            "لازم تكون داخل روم صوتي حتى يقدر البوت يدخل", ephemeral=True
+        )
+        return
+
+    channel = interaction.user.voice.channel
+    guild = interaction.guild
+    vc = guild.voice_client
+
+    if vc is None:
+        vc = await channel.connect()
+    elif vc.channel != channel:
+        await vc.move_to(channel)
+
+    state = get_state(guild.id)
+    state["text_channel_id"] = channel.id
+
+    await interaction.response.send_message("تم استدعاء البوت للروم", ephemeral=True)
+    await channel.send(
+        "تم دخول البوت لهذا الروم من الان الاوامر تشتغل هنا فقط ولا تشتغل بأي شات اخر"
+    )
+
+
+@bot.tree.command(name="restart", description="اعاده تشغيل البوت")
+@app_commands.default_permissions(administrator=True)
+@app_commands.checks.has_permissions(administrator=True)
+async def restart_slash(interaction: discord.Interaction):
+    await interaction.response.send_message("جاري اعاده تشغيل البوت", ephemeral=True)
+    vc = interaction.guild.voice_client if interaction.guild else None
+    if vc is not None:
+        await vc.disconnect(force=True)
+    await bot.close()
+    os._exit(1)
+
+
+@bot.tree.error
+async def on_app_command_error(interaction: discord.Interaction, error):
+    if isinstance(error, app_commands.MissingPermissions):
+        # تجاهل بصمت، ما نرسل اي رد لغير الادمن
+        return
+    print(f"خطا بامر سلاش: {error}")
 
 
 # ------------------------------------------------------------------
