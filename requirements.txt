@@ -2,3 +2,4 @@ discord.py[voice]
 davey
 yt-dlp
 PyNaCl
+yt-dlp
